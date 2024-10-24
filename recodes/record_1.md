@@ -1,4 +1,4 @@
-record of changes
+record of changes : on state 1
 
 ### 1. pretrained/tsp_20/args.json
 1. 添加新参数 order_size 
