@@ -89,6 +89,7 @@ class MultiHeadAttention(nn.Module):
         K = torch.matmul(hflat, self.W_key).view(shp)
         V = torch.matmul(hflat, self.W_val).view(shp)
         
+        '''
         w_l_r = torch.ones(graph_size)  
         if self.order_size > 0 and self.lr_encode != 1.0 :
           w_l_r = torch.tensor([1]*(graph_size-self.order_size) + [self.lr_encode**i for i in range(self.order_size)])
@@ -97,10 +98,11 @@ class MultiHeadAttention(nn.Module):
            w_r = torch.matmul(w_l_r.unsqueeze(1),w_l_r.unsqueeze(0))
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         W_r = w_r.unsqueeze(0).unsqueeze(0).repeat(self.n_heads, batch_size, 1, 1).to(device)
+        '''
 
         # Calculate compatibility (n_heads, batch_size, n_query, graph_size)
         compatibility = self.norm_factor * torch.matmul(Q, K.transpose(2, 3))
-        compatibility = torch.matmul(compatibility,W_r)
+        '''compatibility = torch.matmul(compatibility,W_r)'''
 
         # Optionally apply mask to prevent attention
         if mask is not None:
