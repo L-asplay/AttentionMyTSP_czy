@@ -47,8 +47,7 @@ class AttentionModel(nn.Module):
                  problem,
                  n_encode_layers=2,
 
-                 order_size=0,
-                 lr_encode=1.0,
+                 depencecy=[],
                  sub_encode_layers=0,
 
                  tanh_clipping=10.,
@@ -64,16 +63,13 @@ class AttentionModel(nn.Module):
         self.hidden_dim = hidden_dim
         self.n_encode_layers = n_encode_layers
 
-        self.order_size=order_size
-        self.lr_encode=lr_encode
+        self.depencency=depencecy
         self.sub_encode_layers=sub_encode_layers
 
         self.decode_type = None
         self.temp = 1.0
-        self.allow_partial = problem.NAME == 'sdvrp'
-        self.is_vrp = problem.NAME == 'cvrp' or problem.NAME == 'sdvrp'
-        self.is_orienteering = problem.NAME == 'op'
-        self.is_pctsp = problem.NAME == 'pctsp'
+
+        self.is_uav = problem.NAME == 'uav'
 
         self.tanh_clipping = tanh_clipping
 
@@ -86,20 +82,13 @@ class AttentionModel(nn.Module):
         self.shrink_size = shrink_size
 
         # Problem specific context parameters (placeholder and step context dimension)
-        if self.is_vrp or self.is_orienteering or self.is_pctsp:
-            # Embedding of last node + remaining_capacity / remaining length / remaining prize to collect
-            step_context_dim = embedding_dim + 1
+        if self.is_uav :
+            #print('please realize the context in decoder')
+            #assert(0)
+            self.uav_embedding = nn.Embedding(3, embedding_dim)  
+            step_context_dim = embedding_dim + 2  # uav 
+            node_dim = 6  # loc, time_window, resource, demand
 
-            if self.is_pctsp:
-                node_dim = 4  # x, y, expected_prize, penalty
-            else:
-                node_dim = 3  # x, y, demand / prize
-
-            # Special embedding projection for depot node
-            self.init_embed_depot = nn.Linear(2, embedding_dim)
-            
-            if self.is_vrp and self.allow_partial:  # Need to include the demand if split delivery allowed
-                self.project_node_step = nn.Linear(1, 3 * embedding_dim, bias=False)
         else:  # TSP
             assert problem.NAME == "tsp", "Unsupported problem: {}".format(problem.NAME)
             step_context_dim = 2 * embedding_dim  # Embedding of first and last node
@@ -116,8 +105,7 @@ class AttentionModel(nn.Module):
             embed_dim=embedding_dim,
             n_layers=self.n_encode_layers,
 
-            order_size=self.order_size,
-            lr_encode=self.lr_encode,
+            depencecy=self.depencency,
             sub_layers=self.sub_encode_layers,
 
             normalization=normalization
@@ -136,7 +124,7 @@ class AttentionModel(nn.Module):
         if temp is not None:  # Do not change temperature if not provided
             self.temp = temp
 
-    def forward(self, input, return_pi=False):
+    def forward(self, input, return_pi=False, selector=None):
         """
         :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
         :param return_pi: whether to return the output sequences, this is optional as it is not compatible with
@@ -144,12 +132,27 @@ class AttentionModel(nn.Module):
         :return:
         """
 
-        if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
-            embeddings, _ = checkpoint(self.embedder, self._init_embed(input))
-        else:
-            embeddings, _ = self.embedder(self._init_embed(input))
+        init_embeddings=self._init_embed(input)
+        if self.is_uav :
+           if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
+            embeddings_task, _ = checkpoint(self.embedder, init_embeddings['task'])
+            embeddings = {
+                'uav': init_embeddings['uav'],
+                'task':embeddings_task
+            }
+           else:
+            embeddings_task, _ = self.embedder(init_embeddings['task'])
+            embeddings = {
+                'uav': init_embeddings['uav'],
+                'task':embeddings_task
+            }
+        else :
+           if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
+            embeddings, _ = checkpoint(self.embedder, init_embeddings)
+           else:
+            embeddings, _ = self.embedder(init_embeddings)
 
-        _log_p, pi = self._inner(input, embeddings)
+        _log_p, pi = self._inner(input, embeddings, selector)
 
         cost, mask = self.problem.get_costs(input, pi)
         # Log likelyhood is calculated within the model since returning it per action does not work well with
@@ -215,28 +218,17 @@ class AttentionModel(nn.Module):
 
     def _init_embed(self, input):
 
-        if self.is_vrp or self.is_orienteering or self.is_pctsp:
-            if self.is_vrp:
-                features = ('demand', )
-            elif self.is_orienteering:
-                features = ('prize', )
-            else:
-                assert self.is_pctsp
-                features = ('deterministic_prize', 'penalty')
-            return torch.cat(
-                (
-                    self.init_embed_depot(input['depot'])[:, None, :],
-                    self.init_embed(torch.cat((
-                        input['loc'],
-                        *(input[feat][:, :, None] for feat in features)
-                    ), -1))
-                ),
-                1
-            )
+        if self.is_uav:
+            task_info = torch.cat((input["task_position"], input["time_window"], input["loT_resource"],input["task_data"]), dim=-1)
+            uav_info = torch.cat((input["UAV_start_pos"],input["UAV_resourse"]),dim=-1)
+            return {
+                "uav": self.uav_embedding(uav_info),
+                "task": self.init_embed(task_info)
+            }
         # TSP
         return self.init_embed(input)
 
-    def _inner(self, input, embeddings):
+    def _inner(self, input, embeddings, selector=None):
 
         outputs = []
         sequences = []
@@ -246,7 +238,8 @@ class AttentionModel(nn.Module):
 
         # Compute keys, values for the glimpse and keys for the logits once as they can be reused in every step
         fixed = self._precompute(embeddings)
-
+        batch_indices, selected_indices = selector(embeddings) if selector is not None else None, None
+        state = state.selectasks(batch_indices, selected_indices)
         batch_size = state.ids.size(0)
 
         # Perform decoding steps
@@ -393,51 +386,21 @@ class AttentionModel(nn.Module):
         current_node = state.get_current_node()
         batch_size, num_steps = current_node.size()
 
-        if self.is_vrp:
-            # Embedding of previous node + remaining capacity
-            if from_depot:
-                # 1st dimension is node idx, but we do not squeeze it since we want to insert step dimension
-                # i.e. we actually want embeddings[:, 0, :][:, None, :] which is equivalent
-                return torch.cat(
-                    (
-                        embeddings[:, 0:1, :].expand(batch_size, num_steps, embeddings.size(-1)),
-                        # used capacity is 0 after visiting depot
-                        self.problem.VEHICLE_CAPACITY - torch.zeros_like(state.used_capacity[:, :, None])
-                    ),
-                    -1
-                )
-            else:
-                return torch.cat(
-                    (
-                        torch.gather(
-                            embeddings,
-                            1,
-                            current_node.contiguous()
-                                .view(batch_size, num_steps, 1)
-                                .expand(batch_size, num_steps, embeddings.size(-1))
-                        ).view(batch_size, num_steps, embeddings.size(-1)),
-                        self.problem.VEHICLE_CAPACITY - state.used_capacity[:, :, None]
-                    ),
-                    -1
-                )
-        elif self.is_orienteering or self.is_pctsp:
+        if  self.is_uav:
+
             return torch.cat(
                 (
                     torch.gather(
                         embeddings,
                         1,
-                        current_node.contiguous()
-                            .view(batch_size, num_steps, 1)
-                            .expand(batch_size, num_steps, embeddings.size(-1))
+                        current_node.contiguous().view(batch_size, num_steps, 1).expand(batch_size, num_steps, embeddings.size(-1))
                     ).view(batch_size, num_steps, embeddings.size(-1)),
-                    (
-                        state.get_remaining_length()[:, :, None]
-                        if self.is_orienteering
-                        else state.get_remaining_prize_to_collect()[:, :, None]
-                    )
+                    self.problem.VEHICLE_CAPACITY - state.used_capacity[:, :, None],
+                    state.cur_free_time[:, :, None] / 1440
                 ),
                 -1
             )
+        
         else:  # TSP
         
             if num_steps == 1:  # We need to special case if we have only 1 step, may be the first or not
@@ -501,22 +464,7 @@ class AttentionModel(nn.Module):
         return logits, glimpse.squeeze(-2)
 
     def _get_attention_node_data(self, fixed, state):
-
-        if self.is_vrp and self.allow_partial:
-
-            # Need to provide information of how much each node has already been served
-            # Clone demands as they are needed by the backprop whereas they are updated later
-            glimpse_key_step, glimpse_val_step, logit_key_step = \
-                self.project_node_step(state.demands_with_depot[:, :, :, None].clone()).chunk(3, dim=-1)
-
-            # Projection of concatenation is equivalent to addition of projections but this is more efficient
-            return (
-                fixed.glimpse_key + self._make_heads(glimpse_key_step),
-                fixed.glimpse_val + self._make_heads(glimpse_val_step),
-                fixed.logit_key + logit_key_step,
-            )
-
-        # TSP or VRP without split delivery
+        # without split delivery
         return fixed.glimpse_key, fixed.glimpse_val, fixed.logit_key
 
     def _make_heads(self, v, num_steps=None):

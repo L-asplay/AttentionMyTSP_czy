@@ -20,8 +20,8 @@ class MultiHeadAttention(nn.Module):
             n_heads,
             input_dim,
             embed_dim,
-            order_size=0,
-            lr_encode=1.0,
+            #order_size=0,
+            #lr_encode=1.0,
             val_dim=None,
             key_dim=None
     ):
@@ -38,8 +38,8 @@ class MultiHeadAttention(nn.Module):
         self.val_dim = val_dim
         self.key_dim = key_dim
 
-        self.order_size = order_size
-        self.lr_encode = lr_encode
+        #self.order_size = order_size
+        #self.lr_encode = lr_encode
 
         self.norm_factor = 1 / math.sqrt(key_dim)  # See Attention is all you need
 
@@ -176,8 +176,8 @@ class MultiHeadAttentionLayer(nn.Sequential):
             embed_dim,
             feed_forward_hidden=512,
             normalization='batch',
-            order_size=0,
-            lr_encode=1.0
+            #order_size=0,
+            #lr_encode=1.0
     ):
         super(MultiHeadAttentionLayer, self).__init__(
             SkipConnection(
@@ -185,8 +185,8 @@ class MultiHeadAttentionLayer(nn.Sequential):
                     n_heads,
                     input_dim=embed_dim,
                     embed_dim=embed_dim,
-                    order_size=order_size,
-                    lr_encode=lr_encode
+                    #order_size=order_size,
+                    #lr_encode=lr_encode
                 )
             ),
             Normalization(embed_dim, normalization),
@@ -208,8 +208,7 @@ class GraphAttentionEncoder(nn.Module):
             embed_dim,
             n_layers,
 
-            order_size,
-            lr_encode,
+            dependency,
             sub_layers,
 
             node_dim=None,
@@ -221,22 +220,15 @@ class GraphAttentionEncoder(nn.Module):
         # To map input to embedding space
         self.init_embed = nn.Linear(node_dim, embed_dim) if node_dim is not None else None
         
-        self.order_size = order_size
-
-        self.layers1 = nn.Sequential(*(
+        self.dependency = torch.tensor(dependency) if dependency is not [] else None
+        
+        self.sub_layers = nn.Sequential(*(
             MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden, normalization)
             for _ in range(sub_layers)
-        ))
-        
-        self.layers2 = nn.Sequential(*(
-            MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden, normalization,
-            order_size,lr_encode)
-            for _ in range(sub_layers)
-       ))
+       ))  if self.dependency is not None else None
 
         self.layers = nn.Sequential(*(
-            MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden, normalization,
-            order_size,lr_encode)
+            MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden, normalization)
             for _ in range(n_layers-sub_layers)
         ))
 
@@ -247,15 +239,12 @@ class GraphAttentionEncoder(nn.Module):
         # Batch multiply to get initial embeddings of nodes
         h = self.init_embed(x.view(-1, x.size(-1))).view(*x.size()[:2], -1) if self.init_embed is not None else x
 
-        graph_size = h.size()[1]
-
-        h1 = h[:,:graph_size-self.order_size]
-        h2 = h[:,graph_size-self.order_size:]
-
-        h1 = self.layers1(h1)
-        h2 = self.layers2(h2)
-           
-        h = torch.cat((h1, h2), dim=1)
+        if self.dependency is not None:
+            batch_size, graph_size, embed_dim = h.size()
+            dep_emb = torch.gather(h, dim=1, 
+                index=self.dependency.unsqueeze(0).expand(batch_size, -1, embed_dim))
+            dep_emb = self.sub_layers(dep_emb)
+            h = h.scatter_(1, self.dependency.unsqueeze(0).unsqueeze(2).expand(batch_size, -1, embed_dim), dep_emb)
 
         h = self.layers(h)
 

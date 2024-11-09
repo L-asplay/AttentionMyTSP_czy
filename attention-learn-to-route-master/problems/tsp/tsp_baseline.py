@@ -7,7 +7,7 @@ from scipy.spatial import distance_matrix
 from utils import run_all_in_pool
 from utils.data_utils import check_extension, load_dataset, save_dataset
 from subprocess import check_call, check_output, CalledProcessError
-from problems.vrp.vrp_baseline import get_lkh_executable
+from urllib.parse import urlparse
 import torch
 from tqdm import tqdm
 import re
@@ -330,6 +330,28 @@ def solve_all_nn(dataset_path, eval_batch_size=1024, no_cuda=False, dataset_n=No
 
     return results, eval_batch_size
 
+def get_lkh_executable(url="http://www.akira.ruc.dk/~keld/research/LKH-3/LKH-3.0.4.tgz"):
+
+    cwd = os.path.abspath(os.path.join("problems", "vrp", "lkh"))
+    os.makedirs(cwd, exist_ok=True)
+
+    file = os.path.join(cwd, os.path.split(urlparse(url).path)[-1])
+    filedir = os.path.splitext(file)[0]
+
+    if not os.path.isdir(filedir):
+        print("{} not found, downloading and compiling".format(filedir))
+
+        check_call(["wget", url], cwd=cwd)
+        assert os.path.isfile(file), "Download failed, {} does not exist".format(file)
+        check_call(["tar", "xvfz", file], cwd=cwd)
+
+        assert os.path.isdir(filedir), "Extracting failed, dir {} does not exist".format(filedir)
+        check_call("make", cwd=filedir)
+        os.remove(file)
+
+    executable = os.path.join(filedir, "LKH")
+    assert os.path.isfile(executable)
+    return os.path.abspath(executable)
 
 if __name__ == "__main__":
 

@@ -61,8 +61,7 @@ def run(opts):
         problem,
         n_encode_layers=opts.n_encode_layers,
 
-        order_size=opts.order_size,
-        lr_encode=opts.lr_encode,
+        depencency=opts.priority,
         sub_encode_layers=opts.sub_encode_layers,   
 
         mask_inner=True,

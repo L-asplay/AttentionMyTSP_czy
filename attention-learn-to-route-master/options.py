@@ -28,9 +28,10 @@ def get_options(args=None):
                              'Set to 0 to not perform any clipping.')
     parser.add_argument('--normalization', default='batch', help="Normalization type, 'batch' (default) or 'instance'")
 
-    parser.add_argument('--order_size', type=int, default=0, help="The len of order, at the tail of nodes")
-    parser.add_argument('--lr_encode', type=float, default=1.0, help="The arg to set W_r in attention layer")
+    # parser.add_argument('--order_size', type=int, default=0, help="The len of order, at the tail of nodes")
+    # parser.add_argument('--lr_encode', type=float, default=1.0, help="The arg to set W_r in attention layer")
     parser.add_argument('--sub_encode_layers', type=int, default=0, help="The number of pre_layers in Encoder")
+    parser.add_argument('--priority', type=list, default=[], help="The dependency of tasks")
 
     # Training
     parser.add_argument('--lr_model', type=float, default=1e-4, help="Set the learning rate for the actor network")
