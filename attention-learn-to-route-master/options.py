@@ -9,7 +9,7 @@ def get_options(args=None):
         description="Attention based model for solving the Travelling Salesman Problem with Reinforcement Learning")
 
     # Data
-    parser.add_argument('--problem', default='tsp', help="The problem to solve, default 'tsp'")
+    parser.add_argument('--problem', default='mec', help="The problem to solve, default 'mec'")
     parser.add_argument('--graph_size', type=int, default=20, help="The size of the problem graph")
     parser.add_argument('--batch_size', type=int, default=512, help='Number of instances per batch during training')
     parser.add_argument('--epoch_size', type=int, default=1280000, help='Number of instances per epoch during training')
@@ -31,7 +31,8 @@ def get_options(args=None):
     # parser.add_argument('--order_size', type=int, default=0, help="The len of order, at the tail of nodes")
     # parser.add_argument('--lr_encode', type=float, default=1.0, help="The arg to set W_r in attention layer")
     parser.add_argument('--sub_encode_layers', type=int, default=0, help="The number of pre_layers in Encoder")
-    parser.add_argument('--priority', type=list, default=[], help="The dependency of tasks")
+    parser.add_argument('--select_size', type=int, default=-1, help="The number of pre_layers in Encoder")
+    parser.add_argument('--priority', nargs='+', type=int, default=[], help='The dependency sequence for the problem')
 
     # Training
     parser.add_argument('--lr_model', type=float, default=1e-4, help="Set the learning rate for the actor network")

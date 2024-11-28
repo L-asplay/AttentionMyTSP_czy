@@ -8,7 +8,7 @@ def generate_tsp_data(dataset_size, tsp_size):
     return np.random.uniform(size=(dataset_size, tsp_size, 2)).tolist()
 
 
-def generate_uav_data(dataset_size, uav_size, dependency=[]):
+def generate_mec_data(dataset_size, uav_size, dependency=[]):
    
     task_data = np.random.uniform(size=(dataset_size, uav_size, 1), low=0, high=1000)
     UAV_start_pos = np.random.randint(size=(dataset_size, 1, 2), low = 0, high = 500)
@@ -22,11 +22,12 @@ def generate_uav_data(dataset_size, uav_size, dependency=[]):
     dep_window = np.take(time_window, indices=dependency, axis=1)
     dep_window = np.sort(dep_window.reshape(dataset_size, -1), axis=1).reshape(dataset_size, len(dependency), 2)
     np.put_along_axis(time_window, np.array(dependency)[None, :, None], dep_window, axis=1)
-
+        
     return list(zip(
         task_data.tolist(),
         UAV_start_pos.tolist(),
         task_position.tolist(),
+        CPU_circles.tolist(),
         IoT_resource.tolist(),
         UAV_resource.tolist(),
         time_window.tolist()
@@ -39,7 +40,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", default='data', help="Create datasets in data_dir/problem (default 'data')")
     parser.add_argument("--name", type=str, required=True, help="Name to identify dataset")
     parser.add_argument("--problem", type=str, default='all',
-                        help="Problem, 'tsp', 'uav'"
+                        help="Problem, 'tsp', 'mec'"
                              " or 'all' to generate all")
     parser.add_argument('--data_distribution', type=str, default='all',
                         help="Distributions to generate for problem, default 'all'.")
@@ -57,7 +58,7 @@ if __name__ == "__main__":
 
     distributions_per_problem = {
         'tsp': [None],
-        'uav': [None]
+        'mec': [None]
     }
     if opts.problem == 'all':
         problems = distributions_per_problem
@@ -90,8 +91,8 @@ if __name__ == "__main__":
                 np.random.seed(opts.seed)
                 if problem == 'tsp':
                     dataset = generate_tsp_data(opts.dataset_size, graph_size)
-                elif problem == 'uav':
-                    dataset = generate_uav_data(opts.dataset_size, graph_size, opts.priority)
+                elif problem == 'mec':
+                    dataset = generate_mec_data(opts.dataset_size, graph_size, opts.priority)
                 
                 else:
                     assert False, "Unknown problem: {}".format(problem)

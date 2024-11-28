@@ -20,8 +20,6 @@ class MultiHeadAttention(nn.Module):
             n_heads,
             input_dim,
             embed_dim,
-            #order_size=0,
-            #lr_encode=1.0,
             val_dim=None,
             key_dim=None
     ):
@@ -37,10 +35,6 @@ class MultiHeadAttention(nn.Module):
         self.embed_dim = embed_dim
         self.val_dim = val_dim
         self.key_dim = key_dim
-
-        #self.order_size = order_size
-        #self.lr_encode = lr_encode
-
         self.norm_factor = 1 / math.sqrt(key_dim)  # See Attention is all you need
 
         self.W_query = nn.Parameter(torch.Tensor(n_heads, input_dim, key_dim))
@@ -89,20 +83,8 @@ class MultiHeadAttention(nn.Module):
         K = torch.matmul(hflat, self.W_key).view(shp)
         V = torch.matmul(hflat, self.W_val).view(shp)
         
-        '''
-        w_l_r = torch.ones(graph_size)  
-        if self.order_size > 0 and self.lr_encode != 1.0 :
-          w_l_r = torch.tensor([1]*(graph_size-self.order_size) + [self.lr_encode**i for i in range(self.order_size)])
-        w_r = torch.ones(graph_size,graph_size) 
-        if self.order_size > 0 and self.lr_encode != 1.0 :
-           w_r = torch.matmul(w_l_r.unsqueeze(1),w_l_r.unsqueeze(0))
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        W_r = w_r.unsqueeze(0).unsqueeze(0).repeat(self.n_heads, batch_size, 1, 1).to(device)
-        '''
-
         # Calculate compatibility (n_heads, batch_size, n_query, graph_size)
         compatibility = self.norm_factor * torch.matmul(Q, K.transpose(2, 3))
-        '''compatibility = torch.matmul(compatibility,W_r)'''
 
         # Optionally apply mask to prevent attention
         if mask is not None:
@@ -220,7 +202,7 @@ class GraphAttentionEncoder(nn.Module):
         # To map input to embedding space
         self.init_embed = nn.Linear(node_dim, embed_dim) if node_dim is not None else None
         
-        self.dependency = torch.tensor(dependency) if dependency is not [] else None
+        self.dependency = dependency if dependency is not [] else None
         
         self.sub_layers = nn.Sequential(*(
             MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden, normalization)
@@ -241,10 +223,11 @@ class GraphAttentionEncoder(nn.Module):
 
         if self.dependency is not None:
             batch_size, graph_size, embed_dim = h.size()
-            dep_emb = torch.gather(h, dim=1, 
-                index=self.dependency.unsqueeze(0).expand(batch_size, -1, embed_dim))
+            depp = torch.tensor(self.dependency).to(h.device).unsqueeze(0).repeat(batch_size, 1)
+            index = depp.unsqueeze(-1).expand(-1, -1, embed_dim) 
+            dep_emb = torch.gather(h, dim=1, index=index)
             dep_emb = self.sub_layers(dep_emb)
-            h = h.scatter_(1, self.dependency.unsqueeze(0).unsqueeze(2).expand(batch_size, -1, embed_dim), dep_emb)
+            h = h.clone().scatter_(1, depp.unsqueeze(-1).expand(-1, -1, embed_dim), dep_emb)
 
         h = self.layers(h)
 

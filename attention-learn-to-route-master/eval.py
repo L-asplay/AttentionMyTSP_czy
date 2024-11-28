@@ -162,8 +162,8 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
         for seq, cost in zip(sequences, costs):
             if model.problem.NAME == "tsp":
                 seq = seq.tolist()  # No need to trim as all are same length
-            elif model.problem.NAME == "uav":
-                assert False, "to be realized"
+            elif model.problem.NAME == "mec":
+                seq = seq.tolist()#assert False, "to be realized"
             else:
                 assert False, "Unkown problem: {}".format(model.problem.NAME)
             # Note VRP only

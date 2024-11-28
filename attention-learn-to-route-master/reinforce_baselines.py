@@ -163,7 +163,7 @@ class RolloutBaseline(Baseline):
                 dataset = None
 
         if dataset is None:
-            self.dataset = self.problem.make_dataset(
+            self.dataset = self.problem.make_dataset(dependency = self.opts.priority,
                 size=self.opts.graph_size, num_samples=self.opts.val_size, distribution=self.opts.data_distribution)
         else:
             self.dataset = dataset

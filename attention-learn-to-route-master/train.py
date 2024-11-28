@@ -10,7 +10,7 @@ from torch.nn import DataParallel
 from nets.attention_model import set_decode_type
 from utils.log_utils import log_values
 from utils import move_to
-
+torch.autograd.set_detect_anomaly(True)
 
 def get_inner_model(model):
     return model.module if isinstance(model, DataParallel) else model

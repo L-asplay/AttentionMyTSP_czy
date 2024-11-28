@@ -6,6 +6,8 @@ from typing import NamedTuple
 from utils.tensor_functions import compute_in_batches
 
 from nets.graph_encoder import GraphAttentionEncoder
+from nets.task_selection import NodeSelector,AttNodeSelector
+
 from torch.nn import DataParallel
 from utils.beam_search import CachedLookup
 from utils.functions import sample_many
@@ -24,6 +26,7 @@ class AttentionModelFixed(NamedTuple):
     """
     node_embeddings: torch.Tensor
     context_node_projected: torch.Tensor
+    uavs_embed: torch.Tensor
     glimpse_key: torch.Tensor
     glimpse_val: torch.Tensor
     logit_key: torch.Tensor
@@ -33,6 +36,7 @@ class AttentionModelFixed(NamedTuple):
         return AttentionModelFixed(
             node_embeddings=self.node_embeddings[key],
             context_node_projected=self.context_node_projected[key],
+            uavs_embed=self.uavs_embed[key],
             glimpse_key=self.glimpse_key[:, key],  # dim 0 are the heads
             glimpse_val=self.glimpse_val[:, key],  # dim 0 are the heads
             logit_key=self.logit_key[key]
@@ -46,8 +50,9 @@ class AttentionModel(nn.Module):
                  hidden_dim,
                  problem,
                  n_encode_layers=2,
-
-                 depencecy=[],
+                 
+                 select_size=-1,
+                 dependency=[],
                  sub_encode_layers=0,
 
                  tanh_clipping=10.,
@@ -63,13 +68,13 @@ class AttentionModel(nn.Module):
         self.hidden_dim = hidden_dim
         self.n_encode_layers = n_encode_layers
 
-        self.depencency=depencecy
+        self.dependency=dependency
         self.sub_encode_layers=sub_encode_layers
 
         self.decode_type = None
         self.temp = 1.0
 
-        self.is_uav = problem.NAME == 'uav'
+        self.is_mec = problem.NAME == 'mec'
 
         self.tanh_clipping = tanh_clipping
 
@@ -82,12 +87,13 @@ class AttentionModel(nn.Module):
         self.shrink_size = shrink_size
 
         # Problem specific context parameters (placeholder and step context dimension)
-        if self.is_uav :
+        if self.is_mec :
             #print('please realize the context in decoder')
             #assert(0)
-            self.uav_embedding = nn.Embedding(3, embedding_dim)  
-            step_context_dim = embedding_dim + 2  # uav 
-            node_dim = 6  # loc, time_window, resource, demand
+            self.uav_embedding = nn.Linear(3, embedding_dim)
+            self.uav_embeddings = None  
+            step_context_dim = embedding_dim + 1  # mec 
+            node_dim = 7  # loc, time_window, resource, demand, cpu_cl
 
         else:  # TSP
             assert problem.NAME == "tsp", "Unsupported problem: {}".format(problem.NAME)
@@ -105,10 +111,15 @@ class AttentionModel(nn.Module):
             embed_dim=embedding_dim,
             n_layers=self.n_encode_layers,
 
-            depencecy=self.depencency,
+            dependency=self.dependency,
             sub_layers=self.sub_encode_layers,
 
             normalization=normalization
+        )
+
+        self.selector = NodeSelector(
+            graph_size= (20 if select_size == -1 else select_size ), 
+            embed_dim=embedding_dim
         )
 
         # For each node we compute (glimpse key, glimpse value, logit key) so 3 * embedding_dim
@@ -124,7 +135,7 @@ class AttentionModel(nn.Module):
         if temp is not None:  # Do not change temperature if not provided
             self.temp = temp
 
-    def forward(self, input, return_pi=False, selector=None):
+    def forward(self, input, return_pi=False):
         """
         :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
         :param return_pi: whether to return the output sequences, this is optional as it is not compatible with
@@ -133,40 +144,33 @@ class AttentionModel(nn.Module):
         """
 
         init_embeddings=self._init_embed(input)
-        if self.is_uav :
-           if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
-            embeddings_task, _ = checkpoint(self.embedder, init_embeddings['task'])
-            embeddings = {
-                'uav': init_embeddings['uav'],
-                'task':embeddings_task
-            }
-           else:
-            embeddings_task, _ = self.embedder(init_embeddings['task'])
-            embeddings = {
-                'uav': init_embeddings['uav'],
-                'task':embeddings_task
-            }
-        else :
-           if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
-            embeddings, _ = checkpoint(self.embedder, init_embeddings)
-           else:
-            embeddings, _ = self.embedder(init_embeddings)
+        if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
+          embeddings, _ = checkpoint(self.embedder, init_embeddings)
+        else:
+          embeddings, _ = self.embedder(init_embeddings)
 
-        _log_p, pi = self._inner(input, embeddings, selector)
-
-        cost, mask = self.problem.get_costs(input, pi)
+        _log_p, pi , state_cost = self._inner(input, embeddings)
+        #print(_log_p.size())
+        print(_log_p[0])
+        print(pi.size())
+        for i in range(5):
+           print(pi[i])
+        #breakpoint()
+        #cost, mask = self.problem.get_costs(input, pi)
         # Log likelyhood is calculated within the model since returning it per action does not work well with
         # DataParallel since sequences can be of different lengths
+        cost,mask = state_cost,None
         ll = self._calc_log_likelihood(_log_p, pi, mask)
         if return_pi:
             return cost, ll, pi
-
         return cost, ll
 
     def beam_search(self, *args, **kwargs):
         return self.problem.beam_search(*args, **kwargs, model=self)
 
     def precompute_fixed(self, input):
+        if self.is_mec :
+            assert False,"to be realized"
         embeddings, _ = self.embedder(self._init_embed(input))
         # Use a CachedLookup such that if we repeatedly index this object with the same index we only need to do
         # the lookup once... this is the case if all elements in the batch have maximum batch size
@@ -218,34 +222,40 @@ class AttentionModel(nn.Module):
 
     def _init_embed(self, input):
 
-        if self.is_uav:
-            task_info = torch.cat((input["task_position"], input["time_window"], input["loT_resource"],input["task_data"]), dim=-1)
-            uav_info = torch.cat((input["UAV_start_pos"],input["UAV_resourse"]),dim=-1)
-            return {
-                "uav": self.uav_embedding(uav_info),
-                "task": self.init_embed(task_info)
-            }
+        if self.is_mec:
+            task_info = torch.cat((input["task_position"], input["time_window"], input["IoT_resource"],input["task_data"],input["CPU_circles"]), dim=-1)
+            uav_info = torch.cat((input["UAV_start_pos"],input["UAV_resource"]),dim=-1)
+            self.uav_embeddings =  self.uav_embedding(uav_info)
+            return self.init_embed(task_info)
         # TSP
         return self.init_embed(input)
 
-    def _inner(self, input, embeddings, selector=None):
+    def _inner(self, input, embeddings):
 
         outputs = []
         sequences = []
 
         state = self.problem.make_state(input)
-        state = state.add_order(self.order_size)
 
         # Compute keys, values for the glimpse and keys for the logits once as they can be reused in every step
-        fixed = self._precompute(embeddings)
-        batch_indices, selected_indices = selector(embeddings) if selector is not None else None, None
-        state = state.selectasks(batch_indices, selected_indices)
+        if self.is_mec:
+            fixed = self._precompute(embeddings, self.uav_embeddings)
+        else:
+            fixed = self._precompute(embeddings, None)
+        if self.selector is not None and self.is_mec:
+            node_probs,selected_indices = self.selector(embeddings, self.uav_embeddings) 
+        else :
+            node_probs,selected_indices  = None,None
+        if self.is_mec:
+            state = state.selectasks(selected_indices)
+            state = state.initdep(self.dependency)
+            state = state.locexe()
+        
         batch_size = state.ids.size(0)
 
         # Perform decoding steps
         i = 0
         while not (self.shrink_size is None and state.all_finished()):
-
             if self.shrink_size is not None:
                 unfinished = torch.nonzero(state.get_finished() == 0)
                 if len(unfinished) == 0:
@@ -259,7 +269,6 @@ class AttentionModel(nn.Module):
                     fixed = fixed[unfinished]
 
             log_p, mask = self._get_log_p(fixed, state)
-
             # Select the indices of the next nodes in the sequences, result (batch_size) long
             selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
 
@@ -279,9 +288,9 @@ class AttentionModel(nn.Module):
             sequences.append(selected)
 
             i += 1
-
+    
         # Collected lists, return Tensor
-        return torch.stack(outputs, 1), torch.stack(sequences, 1)
+        return torch.stack(outputs, 1), torch.stack(sequences, 1) ,state.get_final_cost()
 
     def sample_many(self, input, batch_rep=1, iter_rep=1):
         """
@@ -319,13 +328,17 @@ class AttentionModel(nn.Module):
             assert False, "Unknown decode type"
         return selected
 
-    def _precompute(self, embeddings, num_steps=1):
+    def _precompute(self, embeddings, uav, num_steps=1):
 
         # The fixed context projection of the graph embedding is calculated only once for efficiency
         graph_embed = embeddings.mean(1)
         # fixed context = (batch_size, 1, embed_dim) to make broadcastable with parallel timesteps
         fixed_context = self.project_fixed_context(graph_embed)[:, None, :]
-
+        
+        if uav is None :
+            uav = torch.zeros_like(fixed_context)
+        if self.is_mec:
+           embeddings = torch.cat([uav,embeddings],dim=1)
         # The projection of the node embeddings for the attention is calculated once up front
         glimpse_key_fixed, glimpse_val_fixed, logit_key_fixed = \
             self.project_node_embeddings(embeddings[:, None, :, :]).chunk(3, dim=-1)
@@ -336,7 +349,7 @@ class AttentionModel(nn.Module):
             self._make_heads(glimpse_val_fixed, num_steps),
             logit_key_fixed.contiguous()
         )
-        return AttentionModelFixed(embeddings, fixed_context, *fixed_attention_node_data)
+        return AttentionModelFixed(embeddings, fixed_context, uav,*fixed_attention_node_data)
 
     def _get_log_p_topk(self, fixed, state, k=None, normalize=True):
         log_p, _ = self._get_log_p(fixed, state, normalize=normalize)
@@ -354,7 +367,10 @@ class AttentionModel(nn.Module):
     def _get_log_p(self, fixed, state, normalize=True):
 
         # Compute query = context node embedding
-        query = fixed.context_node_projected + \
+        if self.is_mec:
+            query = self.project_step_context(self._get_parallel_step_context(fixed.node_embeddings, state))
+        else :
+            query = fixed.context_node_projected + \
                 self.project_step_context(self._get_parallel_step_context(fixed.node_embeddings, state))
 
         # Compute keys and values for the nodes
@@ -362,7 +378,6 @@ class AttentionModel(nn.Module):
 
         # Compute the mask
         mask = state.get_mask()
-
         # Compute logits (unnormalized log_p)
         log_p, glimpse = self._one_to_many_logits(query, glimpse_K, glimpse_V, logit_K, mask)
 
@@ -385,25 +400,27 @@ class AttentionModel(nn.Module):
 
         current_node = state.get_current_node()
         batch_size, num_steps = current_node.size()
-
-        if  self.is_uav:
-
-            return torch.cat(
-                (
-                    torch.gather(
-                        embeddings,
-                        1,
-                        current_node.contiguous().view(batch_size, num_steps, 1).expand(batch_size, num_steps, embeddings.size(-1))
-                    ).view(batch_size, num_steps, embeddings.size(-1)),
-                    self.problem.VEHICLE_CAPACITY - state.used_capacity[:, :, None],
-                    state.cur_free_time[:, :, None] / 1440
-                ),
-                -1
-            )
+        # num_steps is default to 1
+        if  self.is_mec:
+            if state.i.item() == 0:
+                    # First and only step, ignore prev_a (this is a placeholder)
+                    return torch.cat(
+                      (
+                        self.uav_embeddings,
+                        state.cur_time[:, :, None] / 1440
+                      ),
+                      -1)
+            else:
+                   return torch.cat(
+                      (
+                        torch.gather(embeddings,1,current_node.contiguous().view(batch_size, num_steps, 1).expand(batch_size, num_steps, embeddings.size(-1))
+                        ).view(batch_size, num_steps, embeddings.size(-1)),
+                        state.cur_time[:, :, None] / 1440
+                      ),
+                      -1)
         
         else:  # TSP
-        
-            if num_steps == 1:  # We need to special case if we have only 1 step, may be the first or not
+            # if num_steps == 1:  # We need to special case if we have only 1 step, may be the first or not
                 if state.i.item() == 0:
                     # First and only step, ignore prev_a (this is a placeholder)
                     return self.W_placeholder[None, None, :].expand(batch_size, 1, self.W_placeholder.size(-1))
@@ -412,20 +429,6 @@ class AttentionModel(nn.Module):
                         1,
                         torch.cat((state.first_a, current_node), 1)[:, :, None].expand(batch_size, 2, embeddings.size(-1))
                     ).view(batch_size, 1, -1)
-            # More than one step, assume always starting with first
-            embeddings_per_step = embeddings.gather(
-                1,
-                current_node[:, 1:, None].expand(batch_size, num_steps - 1, embeddings.size(-1))
-            )
-            return torch.cat((
-                # First step placeholder, cat in dim 1 (time steps)
-                self.W_placeholder[None, None, :].expand(batch_size, 1, self.W_placeholder.size(-1)),
-                # Second step, concatenate embedding of first with embedding of current/previous (in dim 2, context dim)
-                torch.cat((
-                    embeddings_per_step[:, 0:1, :].expand(batch_size, num_steps - 1, embeddings.size(-1)),
-                    embeddings_per_step
-                ), 2)
-            ), 1)
 
     def _one_to_many_logits(self, query, glimpse_K, glimpse_V, logit_K, mask):
 

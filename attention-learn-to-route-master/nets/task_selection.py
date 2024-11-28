@@ -4,13 +4,13 @@ import torch.nn.functional as F
 import math
 
 class NodeSelector(nn.Module):
-    def __init__(self,  graph_size, embedding_dim, hidden_dim=128, dropout=0.1):
+    def __init__(self,  graph_size, embed_dim, hidden_dim=128, dropout=0.1):
         super(NodeSelector, self).__init__()
 
         self.graph_size = graph_size
 
         # 用多层全连接网络进行特征变换
-        self.fc1 = nn.Linear(embedding_dim, hidden_dim)  # 第一层全连接层
+        self.fc1 = nn.Linear(embed_dim, hidden_dim)  # 第一层全连接层
         self.fc2 = nn.Linear(hidden_dim, 1)  # 输出一个得分
         
         # Dropout层
@@ -19,10 +19,10 @@ class NodeSelector(nn.Module):
         # 激活函数
         self.relu = nn.ReLU()
 
-    def forward(self, embed):
+    def forward(self, embed_task, embed_uav):
         
-        y = embed["uav"]
-        x = embed["task"]
+        y = embed_uav
+        x = embed_task
         batch_size, gena_size, _ = x.size()
         x = torch.cat((y,x),dim=1)
 
@@ -37,13 +37,10 @@ class NodeSelector(nn.Module):
 
         # 根据选择概率进行采样，选择 graph_size 个节点
         selected_indices = torch.multinomial(node_probs.squeeze(-1), self.graph_size)  # (batch_size, graph_size)
-
-        # 根据选中的索引从 x 中筛选节点
-        batch_indices = torch.arange(batch_size).unsqueeze(-1).expand_as(selected_indices)  # (batch_size, graph_size)
        
-        return  batch_indices, selected_indices
+        return  node_probs,selected_indices
     
-# to be realized
+
 class AttNodeSelector(nn.Module):
     def __init__(self, 
                 graph_size,
@@ -72,10 +69,10 @@ class AttNodeSelector(nn.Module):
             stdv = 1. / math.sqrt(param.size(-1))
             param.data.uniform_(-stdv, stdv)
         
-    def forward(self, embed):
+    def forward(self, embed_task, embed_uav):
         
-        q = embed["uav"]    # (batch, 1, emb_dim)
-        h = embed["task"]   # (batch, gena, emb_dim)
+        q = embed_uav    # (batch, 1, emb_dim)
+        h = embed_task   # (batch, gena, emb_dim)
 
         batch_size, gena_size, input_dim = h.size()
 
@@ -94,9 +91,6 @@ class AttNodeSelector(nn.Module):
         attn = F.softmax(compatibility.transpose(1, 2), dim=1)
 
         selected_indices = torch.multinomial(attn.squeeze(-1), self.graph_size)  # (batch_size, graph_size)
-
-        # 根据选中的索引从 x 中筛选节点
-        batch_indices = torch.arange(batch_size).unsqueeze(-1).expand_as(selected_indices)  # (batch_size, graph_size)
        
-        return  batch_indices, selected_indices
+        return  attn,selected_indices
         

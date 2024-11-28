@@ -19,8 +19,6 @@ class StateTSP(NamedTuple):
     lengths: torch.Tensor
     cur_coord: torch.Tensor
     i: torch.Tensor  # Keeps track of step
-    
-    constrain_: torch.Tensor  # Keeps track of nodes with constrain (batch,1,n_loc+1)
 
     @property
     def visited(self):
@@ -28,13 +26,6 @@ class StateTSP(NamedTuple):
             return self.visited_
         else:
             return mask_long2bool(self.visited_, n=self.loc.size(-2))
-        
-    @property
-    def constrain(self):
-        if self.constrain_.dtype == torch.uint8:
-            return self.constrain_[:,:,:-1]
-        else:
-            return mask_long2bool(self.constrain_[:,:,:-1], n=self.loc.size(-2))
 
     def __getitem__(self, key):
         assert torch.is_tensor(key) or isinstance(key, slice)  # If tensor, idx all tensors by this tensor:
@@ -70,39 +61,7 @@ class StateTSP(NamedTuple):
             lengths=torch.zeros(batch_size, 1, device=loc.device),
             cur_coord=None,
             i=torch.zeros(1, dtype=torch.int64, device=loc.device),  # Vector with length num_steps
-
-            constrain_=(  # constrain_ is simillar to Visited 
-                torch.zeros(
-                    batch_size, 1, n_loc+1,
-                    dtype=torch.uint8, device=loc.device
-                )
-                if visited_dtype == torch.uint8
-                else torch.zeros(batch_size, 1, (n_loc + 63) // 64, dtype=torch.int64, device=loc.device)  # Ceil
-            )
         )
-    
-    def add_order(self, order_size):
-        
-        if order_size ==0 :
-            return self
-
-        batch, graph, _ = self.loc.size()
-        order_ = range(0,graph-order_size+1)
-        order = []
-        for i in order_:
-         order += [torch.ones(batch)*(i) ]  
-        constrain_ = self.constrain_
-        device=self.constrain_.device
-        if self.constrain_.dtype == torch.uint8:
-            for selected in order:
-              node = selected[:, None].to(device).to(torch.long)
-              constrain_ = constrain_.scatter(-1, node[:, :, None], 1)
-        else:
-            for selected in order:
-              node = selected[:, None].to(device).to(torch.long)
-              constrain_ = mask_long_scatter(constrain_, node)
-
-        return self._replace(constrain_=constrain_)
 
     def get_final_cost(self):
 
@@ -135,17 +94,8 @@ class StateTSP(NamedTuple):
         else:
             visited_ = mask_long_scatter(self.visited_, prev_a)
 
-        refree = selected + 1 
-        refree = refree[:,None]
-        if self.constrain_.dtype == torch.uint8:
-            # Add one dimension since we write a single value
-            constrain_ = self.constrain_.scatter(-1, refree[:, :, None], 1)
-        else:
-            constrain_ = mask_long_scatter(self.constrain_, refree)
-
         return self._replace(first_a=first_a, prev_a=prev_a, visited_=visited_,
-                             lengths=lengths, cur_coord=cur_coord, i=self.i + 1,
-                             constrain_=constrain_)
+                             lengths=lengths, cur_coord=cur_coord, i=self.i + 1)
 
     def all_finished(self):
         # Exactly n steps
@@ -155,7 +105,7 @@ class StateTSP(NamedTuple):
         return self.prev_a
 
     def get_mask(self):
-        return ( self.visited > 0) | (self.constrain < 1)  # Hacky way to return bool or uint8 depending on pytorch version
+        return ( self.visited > 0) # Hacky way to return bool or uint8 depending on pytorch version
 
     def get_nn(self, k=None):
         # Insert step dimension

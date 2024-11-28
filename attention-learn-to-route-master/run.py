@@ -61,7 +61,8 @@ def run(opts):
         problem,
         n_encode_layers=opts.n_encode_layers,
 
-        depencency=opts.priority,
+        select_size=opts.select_size,
+        dependency=opts.priority,
         sub_encode_layers=opts.sub_encode_layers,   
 
         mask_inner=True,
@@ -140,7 +141,7 @@ def run(opts):
     lr_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lambda epoch: opts.lr_decay ** epoch)
 
     # Start the actual training loop
-    val_dataset = problem.make_dataset(
+    val_dataset = problem.make_dataset(dependency = opts.priority,
         size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset, distribution=opts.data_distribution)
 
     if opts.resume:
