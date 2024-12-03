@@ -8,3 +8,6 @@ cd attention-learn-to-route-master/
 ```
 python run.py --graph_size 30 --priority 15 2 18 10 --baseline rollout --run_name 'try' --sub_encode_layers 1 --epoch_size 12800 --select_size 25
 ```
+```
+python run.py --graph_size 30 --priority 15 2 18 10 21 4 8 17 27 --baseline rollout --run_name 'try' --sub_encode_layers 1 --epoch_size 12800
+```

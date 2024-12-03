@@ -22,7 +22,10 @@ def generate_mec_data(dataset_size, uav_size, dependency=[]):
     dep_window = np.take(time_window, indices=dependency, axis=1)
     dep_window = np.sort(dep_window.reshape(dataset_size, -1), axis=1).reshape(dataset_size, len(dependency), 2)
     np.put_along_axis(time_window, np.array(dependency)[None, :, None], dep_window, axis=1)
-        
+    time_window[:,:,1] = 10000
+
+    dependencys = [dependency]*dataset_size
+    
     return list(zip(
         task_data.tolist(),
         UAV_start_pos.tolist(),
@@ -30,7 +33,8 @@ def generate_mec_data(dataset_size, uav_size, dependency=[]):
         CPU_circles.tolist(),
         IoT_resource.tolist(),
         UAV_resource.tolist(),
-        time_window.tolist()
+        time_window.tolist(),
+        dependencys
     ))
 
 

@@ -35,6 +35,7 @@ class StateMEC(NamedTuple):
 
     loc_energy: torch.Tensor   # 能耗
     uav_energy: torch.Tensor
+    fly_energy: torch.Tensor
     # 开关电容，本地能耗比，传输速度
 
     #一些参数
@@ -86,10 +87,11 @@ class StateMEC(NamedTuple):
             prev_a=self.prev_a[key],
             visited_=self.visited_[key],
             free=self.free[key],
-            cur_coord=self.cur_coord[key] if self.cur_coord is not None else None,
-            cur_time=self.cur_time,
+            cur_coord=self.cur_coord[key],
+            cur_time=self.cur_time[key],
             loc_energy=self.loc_energy[key],
             uav_energy=self.uav_energy[key],
+            fly_energy=self.fly_energy[key],
         )
 
     @staticmethod
@@ -143,6 +145,7 @@ class StateMEC(NamedTuple):
             i=torch.zeros(1, dtype=torch.int64, device=loc.device),  # Vector with length num_steps
             loc_energy=torch.zeros(batch_size, 1, device=loc.device),
             uav_energy=torch.zeros(batch_size, 1, device=loc.device),
+            fly_energy=torch.zeros(batch_size, 1, device=loc.device),
         )
     
     
@@ -257,15 +260,18 @@ class StateMEC(NamedTuple):
         
         # 计算实际执行/结束时间
         cur_left = tw_left[self.ids, prev_a]
-        arrl_time = (self.cur_time + (cur_coord-self.cur_coord).norm(p=2, dim=-1)/self.speed)[:,:,None]
+        fly_t = (cur_coord-self.cur_coord).norm(p=2, dim=-1)/self.speed #飞行时间
+        arrl_time = (self.cur_time + fly_t)[:,:,None]
         pecc_end = torch.gather(tw_right.squeeze(-1), 1, prec.squeeze(-1)).unsqueeze(-1) * (prec > 0)
         cur_left = torch.maximum(cur_left, torch.maximum(arrl_time,pecc_end))
+        wait_t = (cur_left - arrl_time).squeeze(-1) # 等待时间
         mecexe_time = self.demand[self.ids, prev_a]/self.upload_speed + self.fcycles[self.ids, prev_a]/self.Fresourse
         cur_right = cur_left + mecexe_time
         cur_time = cur_right.squeeze(1)
-        # 计算uav能耗
+        # 计算能耗
         mecexe_energy =  mecexe_time.squeeze(1) * self.UAV_p 
         uav_energy = self.uav_energy + mecexe_energy
+        fly_energy = self.fly_energy + fly_t*self.P_fly + wait_t*self.P_stay
         #更新实际开始结束时间
         tw_left = tw_left.scatter_(1, prev_a.unsqueeze(-1).expand(-1, -1, 1), cur_left)
         tw_right = tw_right.scatter_(1, prev_a.unsqueeze(-1).expand(-1, -1, 1), cur_right)
@@ -288,15 +294,18 @@ class StateMEC(NamedTuple):
 
         return self._replace(prev_a=prev_a, visited_=visited_, cur_coord=cur_coord, 
                         cur_time=cur_time, i=self.i + 1, free=free, 
-                        loc_energy=loc_energy, uav_energy= uav_energy,
+                        loc_energy=loc_energy, uav_energy= uav_energy, fly_energy=fly_energy,
                         tw_left=tw_left, tw_right=tw_right)
     
 
     def get_final_cost(self):
 
         assert self.all_finished()
-        # assert self.visited_.
-        return  self.loc_energy  +  self.uav_energy#回程能耗
+        back_energy = ((self.dopet-self.cur_coord).norm(p=2, dim=-1)/self.speed)*self.P_fly
+        return  self.loc_energy + self.uav_energy + self.fly_energy + back_energy
+
+    def get_timewindow(self):
+        return   torch.cat([self.tw_left,self.tw_right],dim=-1)
 
     def all_finished(self):
         # Exactly no task can choose

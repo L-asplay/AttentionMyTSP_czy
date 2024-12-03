@@ -43,7 +43,8 @@ def eval_dataset_mp(args):
 
     model, _ = load_model(opts.model)
     val_size = opts.val_size // num_processes
-    dataset = model.problem.make_dataset(filename=dataset_path, num_samples=val_size, offset=opts.offset + val_size * i)
+    dataset = model.problem.make_dataset(dependency = opts.priority,
+        filename=dataset_path, num_samples=val_size, offset=opts.offset + val_size * i)
     device = torch.device("cuda:{}".format(i))
 
     return _eval_dataset(model, dataset, width, softmax_temp, opts, device)
@@ -66,7 +67,8 @@ def eval_dataset(dataset_path, width, softmax_temp, opts):
 
     else:
         device = torch.device("cuda:0" if use_cuda else "cpu")
-        dataset = model.problem.make_dataset(filename=dataset_path, num_samples=opts.val_size, offset=opts.offset)
+        dataset = model.problem.make_dataset(dependency = opts.priority,
+            filename=dataset_path, num_samples=opts.val_size, offset=opts.offset)
         results = _eval_dataset(model, dataset, width, softmax_temp, opts, device)
 
     # This is parallelism, even if we use multiprocessing (we report as if we did not use multiprocessing, e.g. 1 GPU)

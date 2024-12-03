@@ -69,6 +69,9 @@ class StateTSP(NamedTuple):
         # assert self.visited_.
 
         return self.lengths + (self.loc[self.ids, self.first_a, :] - self.cur_coord).norm(p=2, dim=-1)
+    
+    def get_timewindow(self):
+        return None
 
     def update(self, selected):
 

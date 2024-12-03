@@ -149,17 +149,14 @@ class AttentionModel(nn.Module):
         else:
           embeddings, _ = self.embedder(init_embeddings)
 
-        _log_p, pi , state_cost = self._inner(input, embeddings)
-        #print(_log_p.size())
-        print(_log_p[0])
-        print(pi.size())
-        for i in range(5):
-           print(pi[i])
+        _log_p, pi, state_cost, state_tw = self._inner(input, embeddings)
+        #print(pi.size())
+        #for i in range(5):
+        #   print(pi[i])
         #breakpoint()
-        #cost, mask = self.problem.get_costs(input, pi)
+        cost, mask = self.problem.get_costs(input, pi, state_cost, state_tw)
         # Log likelyhood is calculated within the model since returning it per action does not work well with
         # DataParallel since sequences can be of different lengths
-        cost,mask = state_cost,None
         ll = self._calc_log_likelihood(_log_p, pi, mask)
         if return_pi:
             return cost, ll, pi
@@ -288,9 +285,9 @@ class AttentionModel(nn.Module):
             sequences.append(selected)
 
             i += 1
-    
+
         # Collected lists, return Tensor
-        return torch.stack(outputs, 1), torch.stack(sequences, 1) ,state.get_final_cost()
+        return torch.stack(outputs, 1), torch.stack(sequences, 1), state.get_final_cost(), state.get_timewindow()
 
     def sample_many(self, input, batch_rep=1, iter_rep=1):
         """
@@ -301,7 +298,7 @@ class AttentionModel(nn.Module):
         # Making a tuple will not work with the problem.get_cost function
         return sample_many(
             lambda input: self._inner(*input),  # Need to unpack tuple into arguments
-            lambda input, pi: self.problem.get_costs(input[0], pi),  # Don't need embeddings as input to get_costs
+            lambda input, pi, ccost, tw: self.problem.get_costs(input[0], pi, ccost, tw),  # Don't need embeddings as input to get_costs
             (input, self.embedder(self._init_embed(input))[0]),  # Pack input with embeddings (additional input)
             batch_rep, iter_rep
         )
