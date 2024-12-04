@@ -61,7 +61,7 @@ def run(opts):
         problem,
         n_encode_layers=opts.n_encode_layers,
 
-        select_size=opts.select_size,
+        select_size=opts.select_size if opts.select_size != -1 else opts.graph_size,
         dependency=opts.priority,
         sub_encode_layers=opts.sub_encode_layers,   
 

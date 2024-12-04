@@ -102,9 +102,9 @@ def load_model(path, epoch=None):
         args['hidden_dim'],
         problem,
         n_encode_layers=args['n_encode_layers'],
-
-        order_size=args['order_size'],
-        lr_encode=args['lr_encode'],
+        
+        select_size=args['select_size'] if args['select_size'] != -1 else args['graph_size'],
+        dependency=args['priority'],
         sub_encode_layers=args['sub_encode_layers'],   
        
         mask_inner=True,
