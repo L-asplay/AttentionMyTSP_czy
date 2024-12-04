@@ -11,7 +11,7 @@ python run.py --graph_size 30 --priority 15 2 18 10 --baseline rollout --run_nam
 ```
 python run.py --graph_size 30 --priority 15 2 18 10 21 4 8 17 27 --baseline rollout --run_name 'try' --sub_encode_layers 1 --epoch_size 12800
 ```
-### Tuning hyperparameters
+### demo & tuning hyperparameters
 demo_6
 ```
 python run.py --problem 'mec' --graph_size 6 --batch_size 5 --epoch_size 10 --val_size 5 --model 'attention' --sub_encode_layers 1 --select_size 6 --priority 3 5 1 --n_epochs 10 --eval_batch_size 5 --baseline rollout --run_name 'demo_6' 
