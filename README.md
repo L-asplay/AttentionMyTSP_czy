@@ -13,6 +13,11 @@ python run.py --graph_size 30 --priority 15 2 18 10 21 4 8 17 27 --baseline roll
 ```
 ### demo & tuning hyperparameters
 demo_6
+1. BAD 20241205T021257
 ```
 python run.py --problem 'mec' --graph_size 6 --batch_size 5 --epoch_size 10 --val_size 5 --model 'attention' --sub_encode_layers 1 --select_size 6 --priority 3 5 1 --n_epochs 10 --eval_batch_size 5 --baseline rollout --run_name 'demo_6' 
+```
+2. BAD 20241205T211530
+```
+python run.py --problem 'mec' --graph_size 6 --batch_size 50 --epoch_size 100 --val_size 50 --model 'attention' --sub_encode_layers 1 --select_size 6 --priority 3 5 1 --n_epochs 50 --eval_batch_size 50 --baseline rollout --run_name 'demo_6' 
 ```

@@ -14,7 +14,7 @@ class MEC(object):
     # UAV fly
     height = 10
     g = 9.8  # gravity 
-    speed = 20
+    speed = 15
     quantity_uav = 2
     Cd = 0.3
     A = 0.1
@@ -22,7 +22,7 @@ class MEC(object):
     P_fly = air_density * A * Cd * pow(speed, 3) / 2 + quantity_uav * g * speed
     P_stay = pow(speed, 3)
     # Iot device energy compute
-    switched_capacitance = 1e-7
+    switched_capacitance = 1e-6
     v = 4
     # transmit
     B = 1e6
