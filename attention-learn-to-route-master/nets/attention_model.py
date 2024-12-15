@@ -294,7 +294,7 @@ class AttentionModel(nn.Module):
         # Making a tuple will not work with the problem.get_cost function
         return sample_many(
             lambda input: self._inner(*input),  # Need to unpack tuple into arguments
-            lambda input, pi, ccost, tw, p: self.problem.get_costs(input[0], pi, ccost, tw),  # Don't need embeddings as input to get_costs
+            lambda input, pi, ccost, tw: self.problem.get_costs(input[0], pi, ccost, tw),  # Don't need embeddings as input to get_costs
             (input, self.embedder(self._init_embed(input))[0]),  # Pack input with embeddings (additional input)
             batch_rep, iter_rep
         )
