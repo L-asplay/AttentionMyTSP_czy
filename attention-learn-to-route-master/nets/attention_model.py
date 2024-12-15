@@ -149,7 +149,7 @@ class AttentionModel(nn.Module):
         else:
           embeddings, _ = self.embedder(init_embeddings)
 
-        _log_p, pi, state_cost, state_tw = self._inner(input, embeddings)
+        _log_p, pi, state_cost, state_tw, _log_p_node, node_index = self._inner(input, embeddings)
         #print(pi.size())
         #for i in range(5):
         #   print(pi[i])
@@ -157,10 +157,10 @@ class AttentionModel(nn.Module):
         cost, mask = self.problem.get_costs(input, pi, state_cost, state_tw)
         # Log likelyhood is calculated within the model since returning it per action does not work well with
         # DataParallel since sequences can be of different lengths
-        ll = self._calc_log_likelihood(_log_p, pi, mask)
+        ll, ll_node = self._calc_log_likelihood(_log_p, pi, mask, _log_p_node, node_index )
         if return_pi:
-            return cost, ll, pi
-        return cost, ll
+            return cost, ll, pi, ll_node
+        return cost, ll, ll_node
 
     def beam_search(self, *args, **kwargs):
         return self.problem.beam_search(*args, **kwargs, model=self)
@@ -203,19 +203,15 @@ class AttentionModel(nn.Module):
 
         return flat_parent[feas_ind], flat_action[feas_ind], flat_score[feas_ind]
 
-    def _calc_log_likelihood(self, _log_p, a, mask):
+    def _calc_log_likelihood(self, _log_p, a, mask, _log_p_node, node_index):
 
         # Get log_p corresponding to selected actions
         log_p = _log_p.gather(2, a.unsqueeze(-1)).squeeze(-1)
-
-        # Optional: mask out actions irrelevant to objective so they do not get reinforced
-        if mask is not None:
-            log_p[mask] = 0
-
+        log_p_node =_log_p_node.gather(1,node_index)
         assert (log_p > -1000).data.all(), "Logprobs should not be -inf, check sampling procedure!"
-
+        assert (log_p_node> -1000).data.all(),"Logprobs should not be -inf, check sampling procedure!"
         # Calculate log_likelihood
-        return log_p.sum(1)
+        return log_p.sum(1), log_p_node.sum(1)
 
     def _init_embed(self, input):
 
@@ -287,7 +283,7 @@ class AttentionModel(nn.Module):
             i += 1
 
         # Collected lists, return Tensor
-        return torch.stack(outputs, 1), torch.stack(sequences, 1), state.get_final_cost(), state.get_timewindow()
+        return torch.stack(outputs, 1), torch.stack(sequences, 1), state.get_final_cost(), state.get_timewindow(),node_probs,selected_indices
 
     def sample_many(self, input, batch_rep=1, iter_rep=1):
         """
@@ -298,7 +294,7 @@ class AttentionModel(nn.Module):
         # Making a tuple will not work with the problem.get_cost function
         return sample_many(
             lambda input: self._inner(*input),  # Need to unpack tuple into arguments
-            lambda input, pi, ccost, tw: self.problem.get_costs(input[0], pi, ccost, tw),  # Don't need embeddings as input to get_costs
+            lambda input, pi, ccost, tw, p: self.problem.get_costs(input[0], pi, ccost, tw),  # Don't need embeddings as input to get_costs
             (input, self.embedder(self._init_embed(input))[0]),  # Pack input with embeddings (additional input)
             batch_rep, iter_rep
         )

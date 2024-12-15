@@ -36,9 +36,17 @@ class NodeSelector(nn.Module):
         node_probs = F.softmax(node_scores, dim=1)  # (batch_size, gena_size , 1)
 
         # 根据选择概率进行采样，选择 graph_size 个节点
-        selected_indices = torch.multinomial(node_probs.squeeze(-1), self.graph_size)  # (batch_size, graph_size)
+        log_node_probs = F.log_softmax(node_scores, dim=1)
+        _ , selected_indices = torch.topk(log_node_probs.squeeze(-1), self.graph_size)
+        #i
+        # if self.decode_type == "greedy":
+        #    selected_indices = torch.max(node_probs dim=1)[1]
+        #elif self.decode_type == "sampling":
+        #    selected_indices = torch.multinomial(node_probs.squeeze(-1), self.graph_size)
+
+        #selected_indices = torch.multinomial(node_probs.squeeze(-1), self.graph_size)  # (batch_size, graph_size)
        
-        return  node_probs,selected_indices
+        return  log_node_probs,selected_indices
     
 
 class AttNodeSelector(nn.Module):
